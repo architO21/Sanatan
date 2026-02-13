@@ -1,4 +1,4 @@
-    package com.example.networkio.socket
+package com.example.networkio.socket
 
     import com.example.networkio.model.Message
     import com.example.networkio.model.ServerEvent

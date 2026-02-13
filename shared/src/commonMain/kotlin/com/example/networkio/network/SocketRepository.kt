@@ -23,6 +23,10 @@ class SocketRepository(
     suspend fun sendMessage(message: Message) {
         socketClient.sendMessage(message)
     }
+
+    suspend fun sendGroupAction(action: GroupAction) {
+        socketClient.sendGroupAction(action)
+    }
     
     suspend fun disconnect() {
         socketClient.disconnect()

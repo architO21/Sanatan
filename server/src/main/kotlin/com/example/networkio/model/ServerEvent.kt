@@ -15,7 +15,7 @@ sealed class ServerEvent{
     @Serializable
     data class OnlineUsers(val users: List<String>):ServerEvent()
     @Serializable
-    data class GroupCreated(val groupId: String, val groupName: String): ServerEvent()
+    data class GroupCreated(val groupId: String, val groupName: String, val members: List<String> = emptyList()): ServerEvent()
     @Serializable
     data class GroupJoined(val groupId: String, val userId: String): ServerEvent()
     @Serializable

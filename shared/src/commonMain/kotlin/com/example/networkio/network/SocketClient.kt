@@ -34,6 +34,11 @@ class SocketClient(
         val jsonMessage = json.encodeToString(message)
         session?.send(Frame.Text(jsonMessage))
     }
+
+    suspend fun sendGroupAction(action: GroupAction) {
+        val jsonAction = json.encodeToString(action)
+        session?.send(Frame.Text(jsonAction))
+    }
     
     suspend fun disconnect() {
         session?.close()

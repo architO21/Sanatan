@@ -180,6 +180,7 @@ fun ChatScreen() {
                                     from = from,
                                     content = messageText,
                                     timestamp = System.currentTimeMillis(),
+                                    sendTo = "all"
                                 )
                                 repository.sendMessage(message)
                                 messageText = ""

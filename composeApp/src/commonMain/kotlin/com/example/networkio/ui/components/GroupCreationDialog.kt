@@ -49,7 +49,10 @@ fun GroupCreationDialog(
                             Checkbox(
                                 checked = selectedUsers[user] == true,
                                 onCheckedChange = { checked ->
-                                    selectedUsers[user] = checked
+                                    // Create a new map to trigger recomposition
+                                    selectedUsers = (selectedUsers.toMutableMap()).apply {
+                                        this[user] = checked
+                                    }
                                 }
                             )
                         }

@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.example.networkio.network.Message
+import com.example.networkio.network.GroupAction
 import com.example.networkio.network.SocketRepository
 import com.example.networkio.network.WebSocketResponseHandler
 import kotlinx.coroutines.CoroutineScope
@@ -27,6 +28,8 @@ data class ChatUiState(
     val onlineUsers: List<String> = emptyList(),
     val groups: List<GroupUi> = emptyList(),
     val showGroupDialog: Boolean = false,
+    val showVisibilityDialog: Boolean = false,
+    val selectedVisibleMembers: List<String>? = null, // null = visible to all, list = visible to specific members
     val isConnected: Boolean = false,
     val connectionStatus: String = "Disconnected",
     val error: String? = null
@@ -71,7 +74,7 @@ class ChatViewModel {
                 from = currentState.username,
                 content = content,
                 timestamp = System.currentTimeMillis(),
-                sendTo = currentState.selectedUser!!,
+                sendTo = currentState.selectedUser!!
             )
             
             println("📤 SENDING MESSAGE: from=${message.from}, to=${message.sendTo}, content=${message.content}")
@@ -108,12 +111,37 @@ class ChatViewModel {
     }
 
     fun createGroup(name: String, members: List<String>) {
+        println("🔵 createGroup called with name='$name', members=$members")
         val owner = _uiState.value.username
-        if (name.isBlank() || owner.isBlank()) return
+        if (name.isBlank() || owner.isBlank()) {
+            println("❌ createGroup: name or owner is blank")
+            return
+        }
         // Minimal deterministic ID so different clients can match the same group
         val groupId = "$owner:${name.trim()}"
         val group = GroupUi(id = groupId, name = name.trim(), members = (members + owner).distinct())
+        println("✅ createGroup: created local group object, groupId=$groupId")
         _uiState.update { it.copy(groups = it.groups + group, showGroupDialog = false, selectedGroupId = groupId) }
+
+        // Notify server so other members get GroupCreated/GroupJoined events
+        viewModelScope.launch {
+            try {
+                println("📤 Sending GroupAction to server")
+                repository.sendGroupAction(
+                    GroupAction(
+                        action = "create_group",
+                        groupId = groupId,
+                        groupName = name.trim(),
+                        members = members.distinct(),
+                        requesterId = owner
+                    )
+                )
+                println("✅ GroupAction sent successfully")
+            } catch (e: Exception) {
+                println("❌ Failed to send GroupAction: ${e.message}")
+                _uiState.update { it.copy(error = "Failed to create group on server: ${e.message}") }
+            }
+        }
     }
 
     fun sendGroupChatMessage(content: String) {
@@ -127,9 +155,9 @@ class ChatViewModel {
                 content = content,
                 timestamp = System.currentTimeMillis(),
                 sendTo = "group:$groupId",
+                visibleTo = state.selectedVisibleMembers
             )
-            // Local echo
-            _uiState.update { it.copy(allMessages = it.allMessages + message) }
+            // Don't do local echo - server will broadcast it back to all members
             try {
                 repository.sendMessage(message)
             } catch (e: Exception) {
@@ -137,7 +165,20 @@ class ChatViewModel {
             }
         }
     }
-    
+
+    fun openVisibilityDialog() {
+        _uiState.update { it.copy(showVisibilityDialog = true) }
+    }
+
+    fun closeVisibilityDialog() {
+        _uiState.update { it.copy(showVisibilityDialog = false) }
+    }
+
+    fun setVisibleMembers(members: List<String>?) {
+        _uiState.update { it.copy(selectedVisibleMembers = members, showVisibilityDialog = false) }
+    }
+
+
     private fun connectToServer(username: String) {
         // Initialize response handler with callbacks
         responseHandler = WebSocketResponseHandler(
@@ -164,13 +205,13 @@ class ChatViewModel {
                     _uiState.update { it.copy(allMessages = it.allMessages + message) }
                 }
             },
-            onGroupCreated = { groupId, groupName ->
+            onGroupCreated = { groupId, groupName, members ->
                 _uiState.update { state ->
                     val existing = state.groups.find { it.id == groupId }
                     val updatedGroups = if (existing == null) {
-                        state.groups + GroupUi(id = groupId, name = groupName.ifBlank { groupId }, members = emptyList())
+                        state.groups + GroupUi(id = groupId, name = groupName.ifBlank { groupId }, members = members)
                     } else {
-                        state.groups.map { if (it.id == groupId) it.copy(name = groupName.ifBlank { it.name }) else it }
+                        state.groups.map { if (it.id == groupId) it.copy(name = groupName.ifBlank { it.name }, members = members) else it }
                     }
                     state.copy(groups = updatedGroups)
                 }

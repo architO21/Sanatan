@@ -10,7 +10,7 @@ class WebSocketResponseHandler(
     private val onUserLeft: (String) -> Unit,
     private val onMessageReceived: (Message) -> Unit,
     // Group callbacks
-    private val onGroupCreated: (groupId: String, groupName: String) -> Unit,
+    private val onGroupCreated: (groupId: String, groupName: String, members: List<String>) -> Unit,
     private val onGroupJoined: (groupId: String, userId: String) -> Unit,
     private val onGroupLeft: (groupId: String, userId: String) -> Unit,
     private val onError: (String) -> Unit
@@ -105,13 +105,31 @@ class WebSocketResponseHandler(
 
     private fun handleGroupCreated(response: String) {
         try {
+            println("DEBUG: Full GroupCreated response: $response")
             val idPattern = "\"groupId\":\"(.*?)\"".toRegex()
             val namePattern = "\"groupName\":\"(.*?)\"".toRegex()
+            val membersPattern = "\"members\":\\[(.*?)\\]".toRegex()
+
             val groupId = idPattern.find(response)?.groupValues?.get(1) ?: return
             val groupName = namePattern.find(response)?.groupValues?.get(1) ?: ""
-            onGroupCreated(groupId, groupName)
-            println("👥 Group created: $groupId name=$groupName")
+            
+            // Extract members list
+            val members = mutableListOf<String>()
+            val membersMatch = membersPattern.find(response)
+            if (membersMatch != null) {
+                val membersStr = membersMatch.groupValues[1]
+                if (membersStr.isNotBlank()) {
+                    membersStr.split(",")
+                        .map { it.trim().removeSurrounding("\"") }
+                        .filter { it.isNotBlank() }
+                        .forEach { members.add(it) }
+                }
+            }
+
+            onGroupCreated(groupId, groupName, members)
+            println("👥 Group created: $groupId name=$groupName members=$members")
         } catch (e: Exception) {
+            println("DEBUG: Error parsing GroupCreated: ${e.stackTrace.joinToString("\n")}")
             onError("Failed to parse GroupCreated: ${e.message}")
         }
     }

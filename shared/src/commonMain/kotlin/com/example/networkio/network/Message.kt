@@ -7,5 +7,6 @@ data class Message(
     val from: String,
     val content: String,
     val timestamp: Long,
-    val sendTo: String = "all",
+    val sendTo: String,
+    val visibleTo: List<String>? = null  // null = visible to all, list = visible to specific members
 )

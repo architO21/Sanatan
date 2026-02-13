@@ -1,13 +1,20 @@
 package com.example.networkio.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.networkio.ui.components.MessageBubble
 import com.example.networkio.ui.components.OnlineUsersList
@@ -76,7 +83,13 @@ fun ChatScreen(viewModel: ChatViewModel = remember { ChatViewModel() }) {
                             username = uiState.username,
                             isConnected = uiState.isConnected,
                             connectionStatus = uiState.connectionStatus,
-                            onSendMessage = { content -> viewModel.sendGroupChatMessage(content) }
+                            onSendMessage = { content -> viewModel.sendGroupChatMessage(content) },
+                            groupMembers = uiState.groups.find { it.id == uiState.selectedGroupId }?.members ?: emptyList(),
+                            selectedVisibleMembers = uiState.selectedVisibleMembers,
+                            onOpenVisibilityDialog = { viewModel.openVisibilityDialog() },
+                            onCloseVisibilityDialog = { viewModel.closeVisibilityDialog() },
+                            onSetVisibleMembers = { members -> viewModel.setVisibleMembers(members) },
+                            showVisibilityDialog = uiState.showVisibilityDialog
                         )
                     }
                 }
@@ -132,65 +145,113 @@ private fun DirectChatArea(
         color = MaterialTheme.colorScheme.background
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Header
+            // Header with modern gradient
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.primaryContainer,
-                shadowElevation = 4.dp
+                color = androidx.compose.ui.graphics.Color(0xFF6B4CE8),
+                shadowElevation = 6.dp
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
                     Text(
                         text = selectedUser ?: "Select a user to chat",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                        ),
+                        color = androidx.compose.ui.graphics.Color.White
                     )
-                    Text(
-                        text = connectionStatus,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (isConnected) 
-                            MaterialTheme.colorScheme.primary 
-                        else 
-                            MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-            
-            // Messages area
-            if (selectedUser == null) {
-                Box(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "👈 Select a user from the list to start chatting",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth().padding(16.dp),
-                    state = listState,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(messages) { message ->
-                        MessageBubble(
-                            message = message,
-                            isCurrentUser = message.from == username
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .background(
+                                    color = if (isConnected) 
+                                        androidx.compose.ui.graphics.Color(0xFF4ADE80)
+                                    else 
+                                        androidx.compose.ui.graphics.Color(0xFFEF4444),
+                                    shape = androidx.compose.foundation.shape.CircleShape
+                                )
+                        )
+                        Text(
+                            text = connectionStatus,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.9f)
                         )
                     }
                 }
             }
             
-            // Input area
+            // Messages area with gradient background
+            if (selectedUser == null) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .background(
+                            brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                                colors = listOf(
+                                    androidx.compose.ui.graphics.Color(0xFFFAFAFC),
+                                    androidx.compose.ui.graphics.Color(0xFFF5F5FA)
+                                )
+                            )
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "�",
+                            style = MaterialTheme.typography.displayLarge
+                        )
+                        Text(
+                            text = "Select a user to start chatting",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = androidx.compose.ui.graphics.Color(0xFF6B7280)
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .background(
+                            brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                                colors = listOf(
+                                    androidx.compose.ui.graphics.Color(0xFFFAFAFC),
+                                    androidx.compose.ui.graphics.Color(0xFFF5F5FA)
+                                )
+                            )
+                        )
+                        .padding(vertical = 12.dp),
+                    state = listState,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(messages) { message ->
+                        MessageBubble(
+                            message = message,
+                            isCurrentUser = message.from == username,
+                            currentUsername = username
+                        )
+                    }
+                }
+            }
+            
+            // Modern input area
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shadowElevation = 8.dp
+                color = androidx.compose.ui.graphics.Color.White,
+                shadowElevation = 12.dp
             ) {
                 Row(
                     modifier = Modifier.padding(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.Bottom
                 ) {
                     OutlinedTextField(
                         value = messageText,
@@ -199,12 +260,18 @@ private fun DirectChatArea(
                         placeholder = { 
                             Text(
                                 if (selectedUser != null) 
-                                    "Type a message to $selectedUser..." 
+                                    "Message $selectedUser..." 
                                 else 
-                                    "Select a user first..."
+                                    "Select a user first...",
+                                color = androidx.compose.ui.graphics.Color(0xFF9CA3AF)
                             ) 
                         },
-                        enabled = isConnected && selectedUser != null
+                        enabled = isConnected && selectedUser != null,
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = androidx.compose.ui.graphics.Color(0xFF6B4CE8),
+                            unfocusedBorderColor = androidx.compose.ui.graphics.Color(0xFFE5E7EB)
+                        )
                     )
                     Button(
                         onClick = {
@@ -213,9 +280,17 @@ private fun DirectChatArea(
                                 messageText = ""
                             }
                         },
-                        enabled = isConnected && messageText.isNotBlank() && selectedUser != null
+                        enabled = isConnected && messageText.isNotBlank() && selectedUser != null,
+                        modifier = Modifier.height(56.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = androidx.compose.ui.graphics.Color(0xFF6B4CE8),
+                            disabledContainerColor = androidx.compose.ui.graphics.Color(0xFFE5E7EB)
+                        ),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp)
                     ) {
-                        Text("Send")
+                        Text("Send", style = MaterialTheme.typography.labelLarge.copy(
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                        ))
                     }
                 }
             }
@@ -230,7 +305,13 @@ private fun GroupChatArea(
     username: String,
     isConnected: Boolean,
     connectionStatus: String,
-    onSendMessage: (String) -> Unit
+    onSendMessage: (String) -> Unit,
+    groupMembers: List<String> = emptyList(),
+    selectedVisibleMembers: List<String>? = null,
+    onOpenVisibilityDialog: () -> Unit = {},
+    onCloseVisibilityDialog: () -> Unit = {},
+    onSetVisibleMembers: (List<String>?) -> Unit = {},
+    showVisibilityDialog: Boolean = false
 ) {
     var messageText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -241,46 +322,229 @@ private fun GroupChatArea(
         }
     }
 
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    Surface(modifier = Modifier.fillMaxSize(), color = androidx.compose.ui.graphics.Color(0xFFFAFAFC)) {
         Column(modifier = Modifier.fillMaxSize()) {
-            Surface(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.primaryContainer, shadowElevation = 4.dp) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(groupName, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                    Text(
-                        text = connectionStatus,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (isConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                    )
+            // Modern group header
+            Surface(
+                modifier = Modifier.fillMaxWidth(), 
+                color = androidx.compose.ui.graphics.Color(0xFF6B4CE8), 
+                shadowElevation = 6.dp
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                groupName, 
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                ), 
+                                color = androidx.compose.ui.graphics.Color.White
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "${groupMembers.size} members",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.85f)
+                            )
+                        }
+                        // Connection status indicator
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(
+                                        color = if (isConnected) 
+                                            androidx.compose.ui.graphics.Color(0xFF4ADE80)
+                                        else 
+                                            androidx.compose.ui.graphics.Color(0xFFEF4444),
+                                        shape = androidx.compose.foundation.shape.CircleShape
+                                    )
+                            )
+                            Text(
+                                text = if (isConnected) "Online" else "Offline",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.9f)
+                            )
+                        }
+                    }
                 }
             }
+            
+            // Messages with gradient background
             LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(16.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .background(
+                        brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                            colors = listOf(
+                                androidx.compose.ui.graphics.Color(0xFFFAFAFC),
+                                androidx.compose.ui.graphics.Color(0xFFF5F5FA)
+                            )
+                        )
+                    )
+                    .padding(vertical = 12.dp),
                 state = listState,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(messages) { message ->
-                    MessageBubble(message = message, isCurrentUser = message.from == username)
+                    MessageBubble(
+                        message = message,
+                        isCurrentUser = message.from == username,
+                        currentUsername = username
+                    )
                 }
             }
-            Surface(modifier = Modifier.fillMaxWidth(), shadowElevation = 8.dp) {
-                Row(modifier = Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = messageText,
-                        onValueChange = { messageText = it },
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text("Type a message to group $groupName...") },
-                        enabled = isConnected
-                    )
-                    Button(onClick = {
-                        if (messageText.isNotBlank()) {
-                            onSendMessage(messageText)
-                            messageText = ""
+            
+            // Modern input area
+            Surface(
+                modifier = Modifier.fillMaxWidth(), 
+                color = androidx.compose.ui.graphics.Color.White,
+                shadowElevation = 12.dp
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    // Selective visibility chip
+                    if (selectedVisibleMembers != null) {
+                        Surface(
+                            color = androidx.compose.ui.graphics.Color(0xFFEDE9FE),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = "🎯",
+                                        style = MaterialTheme.typography.bodyLarge
+                                    )
+                                    Column {
+                                        Text(
+                                            "Selective message",
+                                            style = MaterialTheme.typography.labelMedium.copy(
+                                                fontWeight = FontWeight.SemiBold
+                                            ),
+                                            color = Color(0xFF6B4CE8)
+                                        )
+                                        Text(
+                                            text = "To: ${selectedVisibleMembers.joinToString(", ")}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color(0xFF7C3AED)
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    onClick = { onSetVisibleMembers(null) },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Text(
+                                        "✕", 
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Color(0xFF6B4CE8)
+                                    )
+                                }
+                            }
                         }
-                    }, enabled = isConnected && messageText.isNotBlank()) {
-                        Text("Send")
+                    }
+                    
+                    // Input row with modern design
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        OutlinedTextField(
+                            value = messageText,
+                            onValueChange = { messageText = it },
+                            modifier = Modifier.weight(1f),
+                            placeholder = { 
+                                Text(
+                                    "Message $groupName...",
+                                    color = Color(0xFF9CA3AF)
+                                ) 
+                            },
+                            enabled = isConnected,
+                            shape = RoundedCornerShape(24.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF6B4CE8),
+                                unfocusedBorderColor = Color(0xFFE5E7EB)
+                            )
+                        )
+                        
+                        // Target icon button for selective visibility
+                        IconButton(
+                            onClick = onOpenVisibilityDialog,
+                            enabled = isConnected,
+                            modifier = Modifier
+                                .size(56.dp)
+                                .background(
+                                    color = if (selectedVisibleMembers != null) 
+                                        Color(0xFFEDE9FE) 
+                                    else 
+                                        Color(0xFFF3F4F6),
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                        ) {
+                            Text(
+                                text = "🎯",
+                                style = MaterialTheme.typography.titleLarge
+                            )
+                        }
+                        
+                        Button(
+                            onClick = {
+                                if (messageText.isNotBlank()) {
+                                    onSendMessage(messageText)
+                                    messageText = ""
+                                }
+                            }, 
+                            enabled = isConnected && messageText.isNotBlank(),
+                            modifier = Modifier.height(56.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF6B4CE8),
+                                disabledContainerColor = Color(0xFFE5E7EB)
+                            ),
+                            shape = RoundedCornerShape(24.dp)
+                        ) {
+                            Text(
+                                "Send", 
+                                style = MaterialTheme.typography.labelLarge.copy(
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+
+    if (showVisibilityDialog) {
+        com.example.networkio.ui.components.VisibilitySelectionDialog(
+            members = groupMembers,
+            currentUser = username,
+            initialSelected = selectedVisibleMembers ?: emptyList(),
+            onConfirm = { members ->
+                onSetVisibleMembers(members)
+            },
+            onDismiss = onCloseVisibilityDialog
+        )
     }
 }

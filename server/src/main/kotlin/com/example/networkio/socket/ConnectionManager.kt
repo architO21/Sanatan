@@ -1,4 +1,4 @@
-    package com.example.networkio.socket
+package com.example.networkio.socket
 
     import com.example.networkio.model.Message
     import com.example.networkio.model.ServerEvent
@@ -20,12 +20,16 @@
 
         suspend fun add(session: ClientSession){
             lock.withLock { sessions[session.id]=session }
-            broadcastEvent(ServerEvent.Joined(session.id))
+            // Broadcast updated online users list to everyone
+            val currentUsers = lock.withLock { sessions.keys.toList() }
+            broadcastEvent(ServerEvent.OnlineUsers(currentUsers))
         }
 
         suspend fun remove(id:String) {
             lock.withLock { sessions.remove(id) }
-            broadcastEvent(ServerEvent.Left(id))
+            // Broadcast updated online users list to everyone
+            val currentUsers = lock.withLock { sessions.keys.toList() }
+            broadcastEvent(ServerEvent.OnlineUsers(currentUsers))
         }
 
         suspend fun broadcastEvent(event: ServerEvent) {
@@ -80,5 +84,24 @@
             targets.forEach { session ->
                 session.sendSerialized(message)
             }
+        }
+
+        suspend fun broadcastGroupCreated(groupId: String, groupName: String, members: List<String>) {
+            // Add members to group tracking
+            members.forEach { userId ->
+                addGroupMember(groupId, userId)
+            }
+            // Include members in the event so clients know who's in the group
+            broadcastEvent(ServerEvent.GroupCreated(groupId, groupName, members))
+        }
+
+        suspend fun broadcastGroupJoined(groupId: String, userId: String) {
+            addGroupMember(groupId, userId)
+            broadcastEvent(ServerEvent.GroupJoined(groupId, userId))
+        }
+
+        suspend fun broadcastGroupLeft(groupId: String, userId: String) {
+            removeGroupMember(groupId, userId)
+            broadcastEvent(ServerEvent.GroupLeft(groupId, userId))
         }
     }
