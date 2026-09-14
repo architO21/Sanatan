@@ -77,32 +77,18 @@ class _JournalScreenState extends State<JournalScreen> {
 
     setState(() => _saving = true);
     try {
-      // Offline-first: queue locally, then try to push to the backend.
+      // Save as a local draft — nothing is sent to the server yet.
       await widget.sync.saveJournalEntry(text, _dateStr);
 
       if (!mounted) return;
       setState(() => _lastSavedText = text);
-
-      final wentOnline = widget.sync.pendingCount == 0;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-              wentOnline ? 'Saved and synced!' : 'Saved locally (offline)'),
-          duration: const Duration(seconds: 2),
+          content: Text('Draft saved locally. '
+              'Tap "Send" at the top when you are done for the day.'),
+          duration: const Duration(seconds: 3),
         ),
       );
-
-      if (wentOnline) {
-        // Sync completed → fetch the extracted summary from the server.
-        final data = await widget.api.getJournalEntry(_dateStr);
-        final extracted = data['entry']?['extracted_data'];
-        if (extracted != null && mounted) {
-          _showExtractionSummary(extracted as Map<String, dynamic>);
-        }
-      } else {
-        // Queued for later sync — auto-sync happens when server is reachable.
-        await widget.sync.forceSync();
-      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -112,6 +98,16 @@ class _JournalScreenState extends State<JournalScreen> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  /// Extracted data for the current date from the last "Send", if any.
+  Map<String, dynamic>? _sentExtractedForDate() {
+    for (final item in widget.sync.lastSentEntries) {
+      if (item['date'] == _dateStr) {
+        return (item['extracted_data'] as Map<String, dynamic>?)!;
+      }
+    }
+    return null;
   }
 
   void _showExtractionSummary(Map<String, dynamic> extracted) {
@@ -148,12 +144,22 @@ class _JournalScreenState extends State<JournalScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (calories > 0)
+              if (calories > 0) ...[
                 ListTile(
                   dense: true,
                   leading: const Icon(Icons.restaurant),
                   title: Text('$calories calories'),
                 ),
+                for (final item in (extracted['calories'] as List? ?? []))
+                  if (item is Map && (item['amount_text'] ?? item['description']) != null)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 56),
+                      child: Text(
+                        '· ${item['amount_text'] ?? item['description']}  (${item['calories']} cal)',
+                        style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+                      ),
+                    ),
+              ],
               if (steps > 0)
                 ListTile(
                   dense: true,
@@ -210,6 +216,13 @@ class _JournalScreenState extends State<JournalScreen> {
       appBar: AppBar(
         title: const Text('Journal'),
         actions: [
+          if (_sentExtractedForDate() != null)
+            IconButton(
+              tooltip: 'What was extracted after sending',
+              icon: const Icon(Icons.tips_and_updates_outlined),
+              onPressed: () =>
+                  _showExtractionSummary(_sentExtractedForDate()!),
+            ),
           TextButton(
             onPressed: _pickDate,
             child: Text(

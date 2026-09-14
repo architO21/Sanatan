@@ -1,5 +1,4 @@
-﻿import 'dart:async';
-import 'dart:convert';
+﻿import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -41,6 +40,11 @@ class SyncService extends ChangeNotifier {
 
   int? _lastInitUserId;
 
+  // Results of the most recent send (per journal entry), used to show
+  // what was extracted after the user taps "Send".
+  List<Map<String, dynamic>> _lastSentEntries = [];
+  List<Map<String, dynamic>> get lastSentEntries => List.unmodifiable(_lastSentEntries);
+
   // ── Initialisation ─────────────────────────────────────────────────────
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
@@ -52,7 +56,15 @@ class SyncService extends ChangeNotifier {
     _lastInitUserId = ApiService.userId;
     _lastSync = prefs.getString(_kMeta) ?? 'never';
     await _recountPending();
-    await _trySync();
+    // Lightweight reachability probe only — never pushes automatically.
+    await _probe();
+  }
+
+  // ── Reachability probe (no data pushed) ────────────────────────────────
+  Future<void> _probe() async {
+    final reachable = await _isServerReachable();
+    _state = reachable ? SyncState.idle : SyncState.offline;
+    notifyListeners();
   }
 
   // ── Pending queue helpers ──────────────────────────────────────────────
@@ -83,7 +95,7 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── Public: queue a journal entry ──────────────────────────────────────
+  // ── Public: save a draft journal entry (queued locally, NOT sent) ──────
   Future<void> saveJournalEntry(String rawText, String date) async {
     final queue = await _readQueue(_keyJournals);
     // Latest entry for a date wins.
@@ -94,7 +106,6 @@ class SyncService extends ChangeNotifier {
     });
     await _writeQueue(_keyJournals, queue);
     await _recountPending();
-    unawaited(_trySync());
   }
 
   // ── Public: queue an expense ───────────────────────────────────────────
@@ -115,7 +126,6 @@ class SyncService extends ChangeNotifier {
     });
     await _writeQueue(_keyExpenses, queue);
     await _recountPending();
-    unawaited(_trySync());
   }
 
   // ── Public: queue a study topic update ─────────────────────────────────
@@ -129,7 +139,6 @@ class SyncService extends ChangeNotifier {
     });
     await _writeQueue(_keyStudy, queue);
     await _recountPending();
-    unawaited(_trySync());
   }
 
   // ── Public: queue a new study topic assignment ─────────────────────────
@@ -144,7 +153,6 @@ class SyncService extends ChangeNotifier {
     });
     await _writeQueue(_keyStudy, queue);
     await _recountPending();
-    unawaited(_trySync());
   }
 
   // ── Connectivity check + sync ──────────────────────────────────────────
@@ -192,6 +200,7 @@ class SyncService extends ChangeNotifier {
 
   Future<void> _syncAll() async {
     int synced = 0;
+    final sentEntries = <Map<String, dynamic>>[];
 
     // 1. Journal entries
     final journalQueue = await _readQueue(_keyJournals);
@@ -199,10 +208,15 @@ class SyncService extends ChangeNotifier {
       final remaining = <Map<String, dynamic>>[];
       for (final item in journalQueue) {
         try {
-          await api.createJournalEntry(
+          final data = await api.createJournalEntry(
             item['raw_text'] as String,
             item['date'] as String,
           );
+          final entry = data['entry'] as Map<String, dynamic>?;
+          sentEntries.add({
+            'date': item['date'],
+            'extracted_data': entry?['extracted_data'],
+          });
           synced++;
         } catch (e) {
           debugPrint('Failed to sync journal entry: $e');
@@ -211,6 +225,7 @@ class SyncService extends ChangeNotifier {
       }
       await _writeQueue(_keyJournals, remaining);
     }
+    _lastSentEntries = sentEntries;
 
     // 2. Expenses
     final expenseQueue = await _readQueue(_keyExpenses);

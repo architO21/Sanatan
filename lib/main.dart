@@ -116,13 +116,84 @@ class _HomeShellState extends State<HomeShell> {
     if (mounted) setState(() {});
   }
 
+  void _showSentSummary() {
+    final sent = widget.sync.lastSentEntries;
+    if (sent.isEmpty) return;
+
+    final lines = <Widget>[];
+    for (final item in sent) {
+      final date = item['date'];
+      final extracted = item['extracted_data'] as Map<String, dynamic>?;
+      final calories = extracted?['total_calories'] ?? 0;
+      final steps = extracted?['total_steps'] ?? 0;
+      final study = extracted?['study'];
+      final minutes = study != null
+          ? (study['duration_minutes'] ?? 0) as dynamic
+          : 0;
+      final expenses = extracted?['expenses'];
+      final expenseCount = expenses is List ? expenses.length : 0;
+      final items = (extracted?['calories'] as List? ?? [])
+          .whereType<Map>()
+          .map((c) => '· ${c['amount_text'] ?? c['description']} '
+              '(${c['calories']} cal)')
+          .toList();
+      lines.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$date  ·  $calories cal · $steps steps · '
+                '$minutes study min · $expenseCount expense${expenseCount == 1 ? '' : 's'}',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+              if (items.isNotEmpty)
+                ...items.map(
+                  (m) => Padding(
+                    padding: const EdgeInsets.only(left: 12),
+                    child: Text(m, style: const TextStyle(fontSize: 12)),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Day sent!'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('${sent.length} entr${sent.length == 1 ? 'y' : 'ies'} '
+                  'synced to your journal.'),
+              const SizedBox(height: 12),
+              ...lines,
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
         child: Column(
           children: [
-            SyncBanner(sync: widget.sync),
+            SyncBanner(sync: widget.sync, onSent: _showSentSummary),
             Expanded(
               child: IndexedStack(index: _index, children: _screens),
             ),
