@@ -1,6 +1,8 @@
 // Rule-based extraction of structured data from journal entries.
 // No LLM required. Falls back gracefully. LLM can be wired in later.
 
+const { matchFood, matchExact, estimate } = require('./food_db');
+
 /**
  * Extract calories from text like:
  * - "ate 300 calories of oatmeal"
@@ -44,6 +46,248 @@ function extractCalories(text) {
   }
 
   return calories;
+}
+
+/**
+ * Food-quantity extraction ("2 chapatis", "200 grams rice", "200 ml soup",
+ * "1 glass of water", "1 cup of tea, 2 tsp sugar") mapped to a rough
+ * calorie estimate from the food database.
+ */
+const MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack', 'brunch', 'dessert', 'supper'];
+const CONTAINERS = {
+  glass: { ml: 240 },
+  cup: { ml: 240 },
+  bowl: { ml: 300, grams: 200 },
+  plate: { grams: 250 },
+  tsp: { grams: 5 },
+  tbsp: { grams: 15 },
+  spoon: { grams: 15 },
+};
+
+function detectMeal(text, index) {
+  const window = text.slice(Math.max(0, index - 90), index + 40).toLowerCase();
+  for (const meal of MEAL_TYPES) {
+    if (window.includes(meal)) return meal;
+  }
+  return 'other';
+}
+
+const CONTAINER_CANON = {
+  glass: 'glass', glasses: 'glass', cup: 'cup', cups: 'cup',
+  bowl: 'bowl', bowls: 'bowl', plate: 'plate', plates: 'plate',
+  tsp: 'tsp', tbsp: 'tbsp', tbsps: 'tbsp', spoon: 'spoon', spoons: 'spoon',
+};
+
+function extractFoodItems(text) {
+  const items = [];
+  const unresolved = []; // phrases a remote lookup could try to map
+  const used = []; // [start, end] spans already consumed by a quantity
+
+  const isUsed = (idx) => used.some(([s, e]) => idx >= s && idx < e);
+
+  // Tokenize the text into words with absolute positions.
+  const wordRe = /[a-z][a-z'’\-]*/gi;
+  const wholeWords = [];
+  { let m; while ((m = wordRe.exec(text))) wholeWords.push({ w: m[0].toLowerCase(), i: m.index, e: m.index + m[0].length }); }
+
+  // Words that should NOT be part of a food phrase (connectors / prepositions).
+  const PHRASE_STOP = new Set([
+    'with','and','or','of','for','at','on','in','to','from','the','a','an',
+    'but','then','also','just','had','ate','eaten','having','drank','drink',
+    'today','tonight','this','morning','afternoon','evening','night',
+    'was','were','been','is','are','am','be','being',
+    'after','before','during','while','without','between','into',
+    'plus','over','around','beside','afterwards','meanwhile',
+  ]);
+
+  // Capture the food phrase starting at `start` (absolute index).
+  // Returns { phrase, end } where `end` is the absolute index one past the last word consumed.
+  const capturePhrase = (start) => {
+    const startW = wholeWords.findIndex(x => x.i >= start);
+    if (startW === -1) return null;
+    const taken = [];
+    let prevWord;
+    let j = startW;
+    while (j < wholeWords.length && taken.length < 4) {
+      const x = wholeWords[j];
+      if (prevWord && x.i > prevWord.e + 6) break; // too far apart
+      if (PHRASE_STOP.has(x.w)) break;              // stop at connectors
+      taken.push(x);
+      prevWord = x;
+      j++;
+    }
+    // Try longest exact match first (greedy on words). This keeps the phrase
+    // boundary strict so a known food word further on isn't pulled in.
+    for (let n = taken.length; n >= 1; n--) {
+      const cand = taken.slice(0, n).map(x => x.w).join(' ');
+      if (matchExact(cand)) return { phrase: cand, end: taken[n - 1].e };
+    }
+    // No local hit — hand up to 3 words to the remote provider.
+    if (taken.length) {
+      const n = Math.min(taken.length, 3);
+      return { phrase: taken.slice(0, n).map(x => x.w).join(' '), end: taken[n - 1].e };
+    }
+    return null;
+  };
+
+  // 1. Weight: "200 grams rice", "250g paneer", "1 kg potatoes"
+  const weightPattern = /(\d+(?:\.\d+)?)\s*(grams?|g\b|gm\b|kilograms?|kgs?)\s*(?:of\s+)?/gi;
+  for (const match of text.matchAll(weightPattern)) {
+    if (isUsed(match.index)) continue;
+    const cap = capturePhrase(match.index + match[0].length);
+    if (!cap) continue;
+    const amount = parseFloat(match[1]);
+    const unit = match[2].toLowerCase();
+    const grams = unit.startsWith('k') ? amount * 1000 : amount;
+
+    const food = matchFood(cap.phrase);
+    if (food) {
+      const est = estimate(food, { grams });
+      if (!est) continue;
+      used.push([match.index, cap.end]);
+      items.push({
+        meal_type: detectMeal(text, match.index),
+        description: est.name,
+        amount_text: `${match[1]} grams ${food.name}`,
+        calories: est.calories,
+        _phrase: cap.phrase,
+      });
+    } else {
+      used.push([match.index, cap.end]);
+      unresolved.push({
+        kind: 'grams',
+        grams,
+        meal_type: detectMeal(text, match.index),
+        phrase: cap.phrase,
+        amount_text: `${match[1]} grams ${cap.phrase}`,
+      });
+    }
+  }
+
+  // 2. Volume: "200 ml soup", "250 ml milk", "1 litre water"
+  const volumePattern = /(\d+(?:\.\d+)?)\s*(ml|millilitres?|litres?|l\b)\s*(?:of\s+)?/gi;
+  for (const match of text.matchAll(volumePattern)) {
+    if (isUsed(match.index)) continue;
+    const cap = capturePhrase(match.index + match[0].length);
+    if (!cap) continue;
+    const amount = parseFloat(match[1]);
+    const unit = match[2].toLowerCase();
+    const ml = unit.startsWith('l') ? amount * 1000 : amount;
+
+    const food = matchFood(cap.phrase);
+    if (food) {
+      const est = estimate(food, { ml });
+      if (!est) continue;
+      used.push([match.index, cap.end]);
+      items.push({
+        meal_type: detectMeal(text, match.index),
+        description: est.name,
+        amount_text: `${match[1]} ml ${food.name}`,
+        calories: est.calories,
+        _phrase: cap.phrase,
+      });
+    } else {
+      used.push([match.index, cap.end]);
+      unresolved.push({
+        kind: 'ml',
+        ml,
+        meal_type: detectMeal(text, match.index),
+        phrase: cap.phrase,
+        amount_text: `${match[1]} ml ${cap.phrase}`,
+      });
+    }
+  }
+
+  // 3. Containers: "1 glass of water", "2 cups of tea", "1 bowl of dal",
+  //                "2 tsp sugar", "1 plate of rice"
+  const containerPattern = /(\d+(?:\.\d+)?)?\s*(glass(es)?|cups?|bowls?|plates?|tsp|tbsps?|spoons?)\s+(?:of\s+)?/gi;
+  for (const match of text.matchAll(containerPattern)) {
+    if (isUsed(match.index)) continue;
+    const cap = capturePhrase(match.index + match[0].length);
+    if (!cap) continue;
+    const food = matchFood(cap.phrase);
+    if (!food) continue;
+    const containerType = CONTAINER_CANON[match[2].toLowerCase()] || 'glass';
+    const cfg = CONTAINERS[containerType] || CONTAINERS.glass;
+    const count = match[1] ? parseFloat(match[1]) : 1;
+
+    const est = cfg.ml != null && food.kcalPer100ml != null
+      ? estimate(food, { volumeMl: count * cfg.ml })
+      : cfg.grams != null && food.kcalPer100g != null
+        ? estimate(food, { grams: count * cfg.grams })
+        : null;
+    if (!est) continue;
+
+    used.push([match.index, cap.end]);
+    items.push({
+      meal_type: detectMeal(text, match.index),
+      description: est.name,
+      amount_text: `${count} ${match[2].toLowerCase()} ${food.name}`,
+      calories: est.calories,
+      _phrase: cap.phrase,
+    });
+  }
+
+  // 4. Counted pieces: "2 chapatis", "1.5 samosas", "3 eggs", "1 banana"
+  const piecePattern = /(\d+(?:\.\d+)?)\s+/g;
+  const pieceQueue = [];
+  for (const match of text.matchAll(piecePattern)) {
+    pieceQueue.push({ idx: match.index, count: parseFloat(match[1]), end: match.index + match[0].length });
+  }
+  for (const m of pieceQueue) {
+    if (isUsed(m.idx)) continue;
+    const cap = capturePhrase(m.end);
+    if (!cap) continue;
+    const food = matchFood(cap.phrase);
+    if (!food || food.kcalPerPiece == null) continue;
+    const est = estimate(food, { pieces: m.count });
+    if (!est) continue;
+    const amountText = `${m.count} ${food.name}`;
+    used.push([m.idx, cap.end]);
+    items.push({
+      meal_type: detectMeal(text, m.idx),
+      description: est.name,
+      amount_text: amountText.replace('  ', ' '),
+      calories: est.calories,
+      _phrase: cap.phrase,
+    });
+  }
+
+  return { items, unresolved };
+}
+
+/**
+ * Resolve foods not in the local table via the remote nutrition provider.
+ * Best-effort — skips silently on network error or unknown food.
+ */
+async function enrichFoodItems(unresolved, getKcalPer100) {
+  const items = [];
+  for (const u of unresolved) {
+    if (u.kind === 'grams') {
+      const hit = await getKcalPer100(u.phrase);
+      if (!hit) continue;
+      items.push({
+        meal_type: u.meal_type,
+        description: u.phrase.replace(/\b[a-z]/g, c => c.toUpperCase()),
+        amount_text: u.amount_text,
+        calories: Math.round((u.grams / 100) * hit.kcalPer100),
+        source: hit.source,
+        _phrase: u.phrase,
+      });
+    } else if (u.kind === 'ml') {
+      const hit = await getKcalPer100(u.phrase);
+      if (!hit) continue;
+      items.push({
+        meal_type: u.meal_type,
+        description: u.phrase.replace(/\b[a-z]/g, c => c.toUpperCase()),
+        amount_text: u.amount_text,
+        calories: Math.round((u.ml / 100) * hit.kcalPer100),
+        source: hit.source,
+        _phrase: u.phrase,
+      });
+    }
+  }
+  return items;
 }
 
 /**
@@ -405,15 +649,46 @@ function extractExpenses(text) {
 /**
  * Main extraction entry point.
  * Returns a normalized structure that the database layer persists.
+ *
+ * `options.remoteLookup` (default true) enables the Open Food Facts
+ * fallback for foods not in the local table. Best-effort: failures are
+ * skipped, never errors.
  */
-function extract(text) {
-  const lowerText = text.toLowerCase();
+async function extract(text, options = {}) {
+  const useRemote = options.remoteLookup !== false;
 
-  const calories = extractCalories(text);
+  const explicitCalories = extractCalories(text);
+  const foodResult = extractFoodItems(text);
+  const foodItems = [...foodResult.items];
+
+  if (useRemote && foodResult.unresolved.length > 0) {
+    try {
+      const { getKcalPer100 } = require('./nutrition_lookup');
+      const remoteItems = await enrichFoodItems(foodResult.unresolved, getKcalPer100);
+      foodItems.push(...remoteItems);
+    } catch (e) {
+      // Remote enrichment is best-effort — never block the journal save.
+    }
+  }
+
   const activities = extractActivities(text);
   const study = extractStudy(text);
   const moodSleep = extractMoodAndSleep(text);
   const expenses = extractExpenses(text);
+
+  // Merge calorie sources. If the user both says "2 chapatis (~240 cal)",
+  // prefer the explicit number and skip the mapped estimate for that item.
+  const calories = [];
+  const explicitLines = explicitCalories.map(c => c.description.toLowerCase());
+  for (const item of foodItems) {
+    const marker = (item._phrase || '').trim();
+    const foodWords = marker.split(/\s+/).slice(0, 2).join(' ');
+    const dup = foodWords.length > 1 &&
+      explicitLines.some(line => line.includes(foodWords));
+    delete item._phrase;
+    if (!dup) calories.push(item);
+  }
+  for (const c of explicitCalories) calories.push(c);
 
   // Total calories
   const totalCalories = calories.reduce((sum, c) => sum + c.calories, 0);

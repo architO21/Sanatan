@@ -27,6 +27,13 @@ master.exec(`
     token_hash TEXT UNIQUE NOT NULL,
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS food_cache (
+    name TEXT PRIMARY KEY,
+    kcal_per_100g REAL,
+    source TEXT,
+    queried_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 // ── Per-user data DB schema ────────────────────────────────────────────────
@@ -45,6 +52,7 @@ const USER_SCHEMA = `
     entry_id INTEGER REFERENCES journal_entries(id) ON DELETE CASCADE,
     meal_type TEXT,
     description TEXT,
+    amount_text TEXT,
     calories INTEGER,
     created_at TEXT DEFAULT (datetime('now'))
   );
@@ -140,6 +148,13 @@ function getUserDb(userId) {
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(USER_SCHEMA);
   seedCategories(db);
+
+  // Migration: add amount_text column to calories if missing
+  const calCols = db.prepare('PRAGMA table_info(calories)').all();
+  if (!calCols.some(c => c.name === 'amount_text')) {
+    // Plain nullable column — constant default, safe for node:sqlite ALTER.
+    db.exec('ALTER TABLE calories ADD COLUMN amount_text TEXT');
+  }
 
   // Migration: add updated_at to study_topics if missing
   const cols = db.prepare('PRAGMA table_info(study_topics)').all();
@@ -244,6 +259,24 @@ function publicUser(id, email) {
   return { id: Number(id), email };
 }
 
+// ── Food cache (shared across users) ─────────────────────────────────────
+function getFoodCache(name) {
+  return master.prepare(
+    'SELECT kcal_per_100g, source FROM food_cache WHERE name = ?'
+  ).get(name.toLowerCase()) || null;
+}
+
+function setFoodCache(name, kcalPer100g, source) {
+  master.prepare(
+    `INSERT INTO food_cache (name, kcal_per_100g, source, queried_at)
+     VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(name) DO UPDATE SET
+       kcal_per_100g = excluded.kcal_per_100g,
+       source = excluded.source,
+       queried_at = datetime('now')`
+  ).run(name.toLowerCase(), kcalPer100g, source);
+}
+
 module.exports = {
   masterDb: master,
   getUserDb,
@@ -254,4 +287,6 @@ module.exports = {
   getUserByToken,
   revokeToken,
   publicUser,
+  getFoodCache,
+  setFoodCache,
 };

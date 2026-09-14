@@ -4,7 +4,7 @@ const { extract } = require('../services/extractor');
 const { today } = require('../services/spillover');
 
 // POST /api/journal - Create a new journal entry
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const db = req.db;
   const { date, raw_text } = req.body;
 
@@ -14,8 +14,13 @@ router.post('/', (req, res) => {
 
   const entryDate = date || today();
 
-  // Extract structured data from raw text
-  const extracted = extract(raw_text);
+  // Extract structured data from raw text (async: may hit the food API)
+  let extracted;
+  try {
+    extracted = await extract(raw_text);
+  } catch (e) {
+    return res.status(500).json({ error: 'Extraction failed: ' + e.message });
+  }
 
   // Upsert entry (one per date)
   const existing = db.prepare('SELECT id FROM journal_entries WHERE date = ?').get(entryDate);
@@ -40,10 +45,10 @@ router.post('/', (req, res) => {
 
   // Persist structured data
   const insertCalorie = db.prepare(
-    `INSERT INTO calories (entry_id, meal_type, description, calories) VALUES (?, ?, ?, ?)`
+    `INSERT INTO calories (entry_id, meal_type, description, amount_text, calories) VALUES (?, ?, ?, ?, ?)`
   );
   for (const c of extracted.calories) {
-    insertCalorie.run(entryId, c.meal_type, c.description, c.calories);
+    insertCalorie.run(entryId, c.meal_type, c.description, c.amount_text || null, c.calories);
   }
 
   const insertActivity = db.prepare(
